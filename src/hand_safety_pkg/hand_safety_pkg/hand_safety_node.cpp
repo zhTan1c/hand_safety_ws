@@ -8,9 +8,11 @@
  *   Rule 4: 5帧窗口相邻帧差 > 200 → 取5帧均值
  *
  * 触发时发布 /safe/inspire_hand/trigger (std_msgs/String)
+ * 收到 /safe/inspire_hand/estop=true 时进入急停锁存，停止普通指令输出。
  */
 
 #include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <inspire_hand_msgs/msg/inspire_hand_ctrl.hpp>
 #include <inspire_hand_msgs/msg/inspire_hand_state.hpp>
@@ -21,10 +23,12 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <memory>
 
 using InspireHandCtrl = inspire_hand_msgs::msg::InspireHandCtrl;
 using InspireHandState = inspire_hand_msgs::msg::InspireHandState;
+using Bool = std_msgs::msg::Bool;
 using String = std_msgs::msg::String;
 
 // BoundedVector<int16_t, 6> 的便捷别名
@@ -52,6 +56,16 @@ public:
     {
         trigger_pub_ = this->create_publisher<String>(
             "/safe/inspire_hand/trigger", 10);
+        estop_sub_ = this->create_subscription<Bool>(
+            "/safe/inspire_hand/estop", 10,
+            [this](const Bool & msg) {
+                this->estop_callback(msg);
+            });
+        estop_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(20),
+            [this]() {
+                this->estop_timer_callback();
+            });
 
         for (const auto & side : {"l", "r"}) {
             std::string s(side);
@@ -92,9 +106,59 @@ private:
 
     void cmd_callback(const InspireHandCtrl & msg, const std::string & side)
     {
+        if (estop_active_) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[%s] Estop active, raw command ignored.", side.c_str());
+            return;
+        }
+
         auto out = process_msg(msg, side);
         cmd_pubs_[side]->publish(out);
         history_[side].push_back(std::make_shared<InspireHandCtrl>(out));
+    }
+
+    void estop_callback(const Bool & msg)
+    {
+        if (msg.data) {
+            estop_active_ = true;
+            estop_pending_frames_ = 5;
+            RCLCPP_ERROR(this->get_logger(),
+                "Hand estop latched: publishing 5 frames at 50 Hz and blocking normal commands.");
+            publish_estop_command();
+        } else {
+            estop_active_ = false;
+            estop_pending_frames_ = 0;
+            RCLCPP_WARN(this->get_logger(),
+                "Hand estop cleared: normal safety-filtered commands are enabled again.");
+        }
+    }
+
+    void estop_timer_callback()
+    {
+        if (!estop_active_ || estop_pending_frames_ <= 0) {
+            return;
+        }
+        publish_estop_command();
+    }
+
+    void publish_estop_command()
+    {
+        InspireHandCtrl cmd;
+        cmd.pos_set = {0, 0, 0, 0, 0, 0};
+        cmd.angle_set = {1000, 1000, 1000, 1000, 1000, 1000};
+        cmd.force_set = {3000, 3000, 3000, 3000, 3000, 3000};
+        cmd.speed_set = {1000, 1000, 1000, 1000, 1000, 1000};
+        cmd.mode = 0b0001;
+
+        for (const auto & side : {"l", "r"}) {
+            std::string s(side);
+            auto it = cmd_pubs_.find(s);
+            if (it != cmd_pubs_.end() && it->second) {
+                it->second->publish(cmd);
+            }
+        }
+
+        --estop_pending_frames_;
     }
 
     // ── 核心安全逻辑 ──
@@ -262,6 +326,8 @@ private:
     // ── 成员变量 ──
 
     rclcpp::Publisher<String>::SharedPtr trigger_pub_;
+    rclcpp::Subscription<Bool>::SharedPtr estop_sub_;
+    rclcpp::TimerBase::SharedPtr estop_timer_;
     std::map<std::string, rclcpp::Publisher<InspireHandCtrl>::SharedPtr> cmd_pubs_;
     std::map<std::string, rclcpp::Subscription<InspireHandCtrl>::SharedPtr> cmd_subs_;
     std::map<std::string, rclcpp::Subscription<InspireHandState>::SharedPtr> state_subs_;
@@ -271,6 +337,9 @@ private:
 
     // 最新 state
     std::map<std::string, std::shared_ptr<InspireHandState>> latest_state_;
+
+    bool estop_active_{false};
+    int estop_pending_frames_{0};
 };
 
 
