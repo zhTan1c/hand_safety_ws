@@ -19,6 +19,7 @@ setup(
         'console_scripts': [
             # 'hand_safety_node = hand_safety_pkg.hand_safety_node:main',  # 已由 C++ 版替代
             'hand_safety_record_node = hand_safety_pkg.hand_safety_record_node:main',
+            'hand_safety_voice_node = hand_safety_pkg.hand_safety_voice_node:main',
         ],
     },
 )

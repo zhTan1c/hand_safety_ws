@@ -13,6 +13,8 @@
   <depend>inspire_hand_msgs</depend>
   <depend>std_msgs</depend>
   <depend>rclcpp</depend>
+  <depend>unitree_hg</depend>
+  <depend>unitree_api</depend>
   <exec_depend>rclpy</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

@@ -20,3 +20,18 @@ Thumbs.db
 
 # Test
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime logs and captures
+*.log
+safety_trigger_*.log
+safety_logs/
+rosbag2_*/
+*.db3
+*.mcap
+
+# Temp/editor
+*.swp
+*.swo
+*~
