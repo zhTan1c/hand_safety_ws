@@ -31,7 +31,7 @@ install(FILES
   hand_safety_pkg/__init__.py
   # hand_safety_pkg/hand_safety_node.py        # 已由 C++ 版替代
   hand_safety_pkg/hand_safety_record_node.py
-  hand_safety_pkg/hand_safety_voice_node.py
+  # hand_safety_pkg/hand_safety_voice_node.py
   DESTINATION ${_python_dest}
 )
 
@@ -46,10 +46,16 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
   RENAME hand_safety_record_node
 )
-install(PROGRAMS
-  hand_safety_pkg/hand_safety_voice_node.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME hand_safety_voice_node
+# install(PROGRAMS
+#   hand_safety_pkg/hand_safety_voice_node.py
+#   DESTINATION lib/${PROJECT_NAME}
+#   RENAME hand_safety_voice_node
+# )
+
+# ── Launch files ──
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_export_dependencies(inspire_hand_msgs std_msgs unitree_hg unitree_api)

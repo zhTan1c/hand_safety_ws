@@ -196,23 +196,31 @@ source install/setup.bash
 ## Run
 
 ```bash
-# Terminal 1: safety filter and estop executor
 source <your_repo_root>/unitree_ros2/setup.sh
 source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
+ros2 launch hand_safety_pkg hand_safety.launch.py
+```
+
+Useful launch arguments:
+
+```bash
+ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety
+ros2 launch hand_safety_pkg hand_safety.launch.py enable_voice:=false
+ros2 launch hand_safety_pkg hand_safety.launch.py enable_record:=false
+```
+
+For systemd, prefer starting the launch file instead of managing several background `ros2 run` commands in one shell:
+
+```ini
+ExecStart=/bin/bash -lc 'source <your_repo_root>/unitree_ros2/setup.sh && source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash && ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety'
+```
+
+Individual nodes can still be started manually for debugging:
+
+```bash
 ros2 run hand_safety_pkg hand_safety_node
-
-# Terminal 2: Unitree gamepad estop bridge
-source <your_repo_root>/unitree_ros2/setup.sh
-source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
 ros2 run hand_safety_pkg hand_gamepad_estop
-
-# Terminal 3: G1 voice prompts, optional but recommended on real robot
-source <your_repo_root>/unitree_ros2/setup.sh
-source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
 ros2 run hand_safety_pkg hand_safety_voice_node
-
-# Terminal 4: trigger-window logging, optional
-source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
 ros2 run hand_safety_pkg hand_safety_record_node
 ```
 

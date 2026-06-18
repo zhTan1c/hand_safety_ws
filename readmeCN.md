@@ -196,23 +196,31 @@ source install/setup.bash
 ## 运行
 
 ```bash
-# 终端 1：安全过滤与急停执行节点
 source <your_repo_root>/unitree_ros2/setup.sh
 source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
+ros2 launch hand_safety_pkg hand_safety.launch.py
+```
+
+常用 launch 参数：
+
+```bash
+ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety
+ros2 launch hand_safety_pkg hand_safety.launch.py enable_voice:=false
+ros2 launch hand_safety_pkg hand_safety.launch.py enable_record:=false
+```
+
+systemd 开机自启时，建议只启动这个 launch 文件，不要在一个 shell 里手写多个后台 `ros2 run`：
+
+```ini
+ExecStart=/bin/bash -lc 'source <your_repo_root>/unitree_ros2/setup.sh && source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash && ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety'
+```
+
+调试时也可以单独启动节点：
+
+```bash
 ros2 run hand_safety_pkg hand_safety_node
-
-# 终端 2：Unitree 手柄急停桥接节点
-source <your_repo_root>/unitree_ros2/setup.sh
-source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
 ros2 run hand_safety_pkg hand_gamepad_estop
-
-# 终端 3：G1 语音提示节点，真机上建议开启
-source <your_repo_root>/unitree_ros2/setup.sh
-source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
 ros2 run hand_safety_pkg hand_safety_voice_node
-
-# 终端 4：触发日志节点，可选
-source <your_repo_root>/ztx_dexhand_console/hand_safety_ws/install/setup.bash
 ros2 run hand_safety_pkg hand_safety_record_node
 ```
 
