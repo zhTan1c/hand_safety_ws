@@ -23,12 +23,17 @@ Unitree G1 /lowstate
 hand_gamepad_estop
       | short press L1+R1: true
       | press F1: false
+      | hold L2+A: squat-safe hand posture
       v
 /safe/inspire_hand/estop                std_msgs/Bool
       |
       +--> hand_safety_node             latch/clear hand estop
       |
       +--> hand_safety_voice_node       TTS prompt through /api/voice/request
+
+/safe/inspire_hand/raw/cmd/{l,r}        InspireHandCtrl
+      ^
+      | squat-safe posture command from hand_gamepad_estop
 
 /safe/inspire_hand/trigger              std_msgs/String
       |
@@ -62,6 +67,18 @@ mode      = 0b0001
 
 `0b0001` means angle-control mode.
 
+The squat-safe hand posture command is:
+
+```plain
+pos_set   = [0, 0, 0, 0, 0, 0]
+angle_set = [0, 0, 0, 0, 0, 1000]
+force_set = [3000, 3000, 3000, 3000, 3000, 3000]
+speed_set = [1000, 1000, 1000, 1000, 1000, 1000]
+mode      = 0b0001
+```
+
+This posture closes the pitch joints while keeping the thumb bend/roll channel at `1000`, so both hands are safer for squat or ground-support motions.
+
 ## Safety Rules
 
 `hand_safety_node` filters raw commands in this order:
@@ -89,6 +106,7 @@ Gamepad actions:
 | Short press `L1+R1` | Publish `/safe/inspire_hand/estop=true` |
 | Hold `L1+R1` for 2 seconds or longer | Reserved for the robot damping/estop node; hand short-press estop will not fire |
 | Press `F1` | Publish `/safe/inspire_hand/estop=false` and clear the hand estop latch |
+| Hold `L2+A` for 2 seconds | Publish 10 frames at 50 Hz of the squat-safe hand posture to `/safe/inspire_hand/raw/cmd/{l,r}` |
 
 Manual estop control:
 
@@ -144,6 +162,8 @@ Subscribes:
 Publishes:
 
 - `/safe/inspire_hand/estop` (`std_msgs/Bool`)
+- `/safe/inspire_hand/raw/cmd/l` (`InspireHandCtrl`)
+- `/safe/inspire_hand/raw/cmd/r` (`InspireHandCtrl`)
 
 Parameters:
 
@@ -151,6 +171,10 @@ Parameters:
 - `estop_topic`, default `/safe/inspire_hand/estop`
 - `short_press_min_seconds`, default `0.05`
 - `long_press_seconds`, default `2.0`
+- `squat_safe_hold_seconds`, default `2.0`
+- `squat_safe_publish_frames`, default `10`
+- `left_raw_cmd_topic`, default `/safe/inspire_hand/raw/cmd/l`
+- `right_raw_cmd_topic`, default `/safe/inspire_hand/raw/cmd/r`
 
 ### hand_safety_voice_node
 
@@ -205,7 +229,8 @@ Useful launch arguments:
 
 ```bash
 ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety
-ros2 launch hand_safety_pkg hand_safety.launch.py enable_voice:=false
+ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_hold_seconds:=2.0
+ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_publish_frames:=10
 ros2 launch hand_safety_pkg hand_safety.launch.py enable_record:=false
 ```
 

@@ -21,7 +21,7 @@ install(TARGETS hand_safety_node
 add_executable(hand_gamepad_estop
   hand_safety_pkg/hand_gamepad_estop.cpp)
 ament_target_dependencies(hand_gamepad_estop
-  rclcpp std_msgs unitree_hg)
+  rclcpp std_msgs inspire_hand_msgs unitree_hg)
 install(TARGETS hand_gamepad_estop
   DESTINATION lib/${PROJECT_NAME})
 

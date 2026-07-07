@@ -3,11 +3,16 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     estop_topic = LaunchConfiguration('estop_topic')
     lowstate_topic = LaunchConfiguration('lowstate_topic')
+    squat_safe_hold_seconds = LaunchConfiguration('squat_safe_hold_seconds')
+    squat_safe_publish_frames = LaunchConfiguration('squat_safe_publish_frames')
+    left_raw_cmd_topic = LaunchConfiguration('left_raw_cmd_topic')
+    right_raw_cmd_topic = LaunchConfiguration('right_raw_cmd_topic')
     enable_record = LaunchConfiguration('enable_record')
     record_log_dir = LaunchConfiguration('record_log_dir')
     # enable_voice = LaunchConfiguration('enable_voice')
@@ -23,6 +28,26 @@ def generate_launch_description():
             'lowstate_topic',
             default_value='/lowstate',
             description='Unitree lowstate topic that carries wireless_remote data.',
+        ),
+        DeclareLaunchArgument(
+            'squat_safe_hold_seconds',
+            default_value='2.0',
+            description='Hold time for L2+A to publish squat-safe hand posture.',
+        ),
+        DeclareLaunchArgument(
+            'squat_safe_publish_frames',
+            default_value='10',
+            description='Number of 50 Hz squat-safe posture command frames.',
+        ),
+        DeclareLaunchArgument(
+            'left_raw_cmd_topic',
+            default_value='/safe/inspire_hand/raw/cmd/l',
+            description='Left raw command topic for squat-safe hand posture.',
+        ),
+        DeclareLaunchArgument(
+            'right_raw_cmd_topic',
+            default_value='/safe/inspire_hand/raw/cmd/r',
+            description='Right raw command topic for squat-safe hand posture.',
         ),
         DeclareLaunchArgument(
             'enable_record',
@@ -59,6 +84,12 @@ def generate_launch_description():
             parameters=[{
                 'estop_topic': estop_topic,
                 'lowstate_topic': lowstate_topic,
+                'squat_safe_hold_seconds': ParameterValue(
+                    squat_safe_hold_seconds, value_type=float),
+                'squat_safe_publish_frames': ParameterValue(
+                    squat_safe_publish_frames, value_type=int),
+                'left_raw_cmd_topic': left_raw_cmd_topic,
+                'right_raw_cmd_topic': right_raw_cmd_topic,
             }],
         ),
         Node(

@@ -23,12 +23,17 @@ Unitree G1 /lowstate
 hand_gamepad_estop
       | 短按 L1+R1：true
       | 按下 F1：false
+      | 长按 L2+A：蹲姿安全手势
       v
 /safe/inspire_hand/estop                std_msgs/Bool
       |
       +--> hand_safety_node             急停锁存 / 解除锁存
       |
       +--> hand_safety_voice_node       通过 /api/voice/request 语音播报
+
+/safe/inspire_hand/raw/cmd/{l,r}        InspireHandCtrl
+      ^
+      | hand_gamepad_estop 发布蹲姿安全手势
 
 /safe/inspire_hand/trigger              std_msgs/String
       |
@@ -62,6 +67,18 @@ mode      = 0b0001
 
 `0b0001` 表示角度控制模式。
 
+蹲姿安全手势指令是：
+
+```plain
+pos_set   = [0, 0, 0, 0, 0, 0]
+angle_set = [0, 0, 0, 0, 0, 1000]
+force_set = [3000, 3000, 3000, 3000, 3000, 3000]
+speed_set = [1000, 1000, 1000, 1000, 1000, 1000]
+mode      = 0b0001
+```
+
+这个手势会让 pitch 关节收拢，并保持 thumb bend/roll 通道为 `1000`，用于机器人蹲姿或双手撑地前降低碰撞风险。
+
 ## 安全规则
 
 `hand_safety_node` 对普通 raw 指令按以下顺序过滤：
@@ -89,6 +106,7 @@ mode      = 0b0001
 | 短按 `L1+R1` | 发布 `/safe/inspire_hand/estop=true`，触发灵巧手急停 |
 | 长按 `L1+R1` 超过 2 秒 | 预留给机器人阻尼/整机急停节点，灵巧手短按急停不会触发 |
 | 按下 `F1` | 发布 `/safe/inspire_hand/estop=false`，解除灵巧手急停锁存 |
+| 长按 `L2+A` 2 秒 | 以 50 Hz 向 `/safe/inspire_hand/raw/cmd/{l,r}` 发布 10 帧蹲姿安全手势 |
 
 手动触发/解除：
 
@@ -144,6 +162,8 @@ TTS 的 API ID 是 `1001`，请求参数是 JSON，包含 `index`、`text`、`sp
 发布：
 
 - `/safe/inspire_hand/estop`（`std_msgs/Bool`）
+- `/safe/inspire_hand/raw/cmd/l`（`InspireHandCtrl`）
+- `/safe/inspire_hand/raw/cmd/r`（`InspireHandCtrl`）
 
 参数：
 
@@ -151,6 +171,10 @@ TTS 的 API ID 是 `1001`，请求参数是 JSON，包含 `index`、`text`、`sp
 - `estop_topic`，默认 `/safe/inspire_hand/estop`
 - `short_press_min_seconds`，默认 `0.05`
 - `long_press_seconds`，默认 `2.0`
+- `squat_safe_hold_seconds`，默认 `2.0`
+- `squat_safe_publish_frames`，默认 `10`
+- `left_raw_cmd_topic`，默认 `/safe/inspire_hand/raw/cmd/l`
+- `right_raw_cmd_topic`，默认 `/safe/inspire_hand/raw/cmd/r`
 
 ### hand_safety_voice_node
 
@@ -205,7 +229,8 @@ ros2 launch hand_safety_pkg hand_safety.launch.py
 
 ```bash
 ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety
-ros2 launch hand_safety_pkg hand_safety.launch.py enable_voice:=false
+ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_hold_seconds:=2.0
+ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_publish_frames:=10
 ros2 launch hand_safety_pkg hand_safety.launch.py enable_record:=false
 ```
 
