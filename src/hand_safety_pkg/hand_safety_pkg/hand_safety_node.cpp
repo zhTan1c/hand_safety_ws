@@ -9,6 +9,8 @@
  *
  * 触发时发布 /safe/inspire_hand/trigger (std_msgs/String)
  * 收到 /safe/inspire_hand/estop=true 时进入急停锁存，停止普通指令输出。
+ * 收到 /safe/inspire_hand/squat_lock=true 时进入蹲姿安全锁存，
+ * 停止普通指令输出，并发布闭合撑地手势。
  */
 
 #include <rclcpp/rclcpp.hpp>
@@ -61,10 +63,24 @@ public:
             [this](const Bool & msg) {
                 this->estop_callback(msg);
             });
+        squat_lock_topic_ = this->declare_parameter<std::string>(
+            "squat_lock_topic", "/safe/inspire_hand/squat_lock");
+        squat_safe_publish_frames_ = this->declare_parameter<int>(
+            "squat_safe_publish_frames", 10);
+        squat_lock_sub_ = this->create_subscription<Bool>(
+            squat_lock_topic_, 10,
+            [this](const Bool & msg) {
+                this->squat_lock_callback(msg);
+            });
         estop_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(20),
             [this]() {
                 this->estop_timer_callback();
+            });
+        squat_safe_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(20),
+            [this]() {
+                this->squat_safe_timer_callback();
             });
 
         for (const auto & side : {"l", "r"}) {
@@ -111,6 +127,11 @@ private:
                 "[%s] Estop active, raw command ignored.", side.c_str());
             return;
         }
+        if (squat_lock_active_) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                "[%s] Squat lock active, raw command ignored.", side.c_str());
+            return;
+        }
 
         auto out = process_msg(msg, side);
         cmd_pubs_[side]->publish(out);
@@ -133,12 +154,39 @@ private:
         }
     }
 
+    void squat_lock_callback(const Bool & msg)
+    {
+        if (msg.data) {
+            squat_lock_active_ = true;
+            squat_safe_pending_frames_ = std::max(1, squat_safe_publish_frames_);
+            RCLCPP_WARN(this->get_logger(),
+                "Squat lock latched: publishing %d frames at 50 Hz and blocking raw commands.",
+                squat_safe_pending_frames_);
+            publish_squat_safe_command();
+        } else {
+            squat_lock_active_ = false;
+            squat_safe_pending_frames_ = 0;
+            RCLCPP_WARN(this->get_logger(),
+                "Squat lock cleared: normal safety-filtered commands are enabled again.");
+        }
+    }
+
     void estop_timer_callback()
     {
         if (!estop_active_ || estop_pending_frames_ <= 0) {
             return;
         }
         publish_estop_command();
+    }
+
+    void squat_safe_timer_callback()
+    {
+        if (!squat_lock_active_ || squat_safe_pending_frames_ <= 0 ||
+            estop_active_)
+        {
+            return;
+        }
+        publish_squat_safe_command();
     }
 
     void publish_estop_command()
@@ -159,6 +207,32 @@ private:
         }
 
         --estop_pending_frames_;
+    }
+
+    void publish_squat_safe_command()
+    {
+        if (estop_active_) {
+            RCLCPP_WARN(this->get_logger(),
+                "Squat-safe command skipped because hand estop is active.");
+            return;
+        }
+
+        InspireHandCtrl cmd;
+        cmd.pos_set = {0, 0, 0, 0, 0, 0};
+        cmd.angle_set = {0, 0, 0, 0, 0, 1000};
+        cmd.force_set = {3000, 3000, 3000, 3000, 3000, 3000};
+        cmd.speed_set = {1000, 1000, 1000, 1000, 1000, 1000};
+        cmd.mode = 0b0001;
+
+        for (const auto & side : {"l", "r"}) {
+            std::string s(side);
+            auto it = cmd_pubs_.find(s);
+            if (it != cmd_pubs_.end() && it->second) {
+                it->second->publish(cmd);
+            }
+        }
+
+        --squat_safe_pending_frames_;
     }
 
     // ── 核心安全逻辑 ──
@@ -327,7 +401,9 @@ private:
 
     rclcpp::Publisher<String>::SharedPtr trigger_pub_;
     rclcpp::Subscription<Bool>::SharedPtr estop_sub_;
+    rclcpp::Subscription<Bool>::SharedPtr squat_lock_sub_;
     rclcpp::TimerBase::SharedPtr estop_timer_;
+    rclcpp::TimerBase::SharedPtr squat_safe_timer_;
     std::map<std::string, rclcpp::Publisher<InspireHandCtrl>::SharedPtr> cmd_pubs_;
     std::map<std::string, rclcpp::Subscription<InspireHandCtrl>::SharedPtr> cmd_subs_;
     std::map<std::string, rclcpp::Subscription<InspireHandState>::SharedPtr> state_subs_;
@@ -340,6 +416,10 @@ private:
 
     bool estop_active_{false};
     int estop_pending_frames_{0};
+    std::string squat_lock_topic_;
+    bool squat_lock_active_{false};
+    int squat_safe_publish_frames_{10};
+    int squat_safe_pending_frames_{0};
 };
 
 

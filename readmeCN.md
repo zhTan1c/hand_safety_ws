@@ -23,7 +23,6 @@ Unitree G1 /lowstate
 hand_gamepad_estop
       | 短按 L1+R1：true
       | 按下 F1：false
-      | 长按 L2+A：蹲姿安全手势
       v
 /safe/inspire_hand/estop                std_msgs/Bool
       |
@@ -31,9 +30,15 @@ hand_gamepad_estop
       |
       +--> hand_safety_voice_node       通过 /api/voice/request 语音播报
 
-/safe/inspire_hand/raw/cmd/{l,r}        InspireHandCtrl
-      ^
-      | hand_gamepad_estop 发布蹲姿安全手势
+Unitree G1 /api/sport/request,response
+      |
+      v
+hand_robot_state_monitor
+      | fsm_id 706：true
+      v
+/safe/inspire_hand/squat_lock           std_msgs/Bool
+
+      +--> hand_safety_node             蹲姿锁存，双手手指握紧
 
 /safe/inspire_hand/trigger              std_msgs/String
       |
@@ -77,7 +82,7 @@ speed_set = [1000, 1000, 1000, 1000, 1000, 1000]
 mode      = 0b0001
 ```
 
-这个手势会让 pitch 关节收拢，并保持 thumb bend/roll 通道为 `1000`，用于机器人蹲姿或双手撑地前降低碰撞风险。
+这个手势会让 pitch 关节收拢，并保持 thumb bend/roll 通道为 `1000`，用于机器人进入下蹲转换状态后让双手手指握紧。蹲姿锁存开启后，`hand_safety_node` 会忽略普通 raw 指令，直到锁存被解除。
 
 ## 安全规则
 
@@ -105,8 +110,7 @@ mode      = 0b0001
 |------|------|
 | 短按 `L1+R1` | 发布 `/safe/inspire_hand/estop=true`，触发灵巧手急停 |
 | 长按 `L1+R1` 超过 2 秒 | 预留给机器人阻尼/整机急停节点，灵巧手短按急停不会触发 |
-| 按下 `F1` | 发布 `/safe/inspire_hand/estop=false`，解除灵巧手急停锁存 |
-| 长按 `L2+A` 2 秒 | 以 50 Hz 向 `/safe/inspire_hand/raw/cmd/{l,r}` 发布 10 帧蹲姿安全手势 |
+| 按下 `F1` | 发布 `/safe/inspire_hand/estop=false` 和 `/safe/inspire_hand/squat_lock=false` |
 
 手动触发/解除：
 
@@ -114,6 +118,30 @@ mode      = 0b0001
 ros2 topic pub --once /safe/inspire_hand/estop std_msgs/msg/Bool "{data: true}"
 ros2 topic pub --once /safe/inspire_hand/estop std_msgs/msg/Bool "{data: false}"
 ```
+
+手动触发/解除蹲姿锁存：
+
+```bash
+ros2 topic pub --once /safe/inspire_hand/squat_lock std_msgs/msg/Bool "{data: true}"
+ros2 topic pub --once /safe/inspire_hand/squat_lock std_msgs/msg/Bool "{data: false}"
+```
+
+## 蹲下后双手手指握紧
+
+`hand_robot_state_monitor` 通过 Unitree 运动 API 请求/响应话题查询当前 G1 FSM ID：
+
+```plain
+/api/sport/request
+/api/sport/response
+```
+
+当检测到 `fsm_id == 706` 时，机器人处于站立到下蹲或下蹲到起立的转换状态。监测节点会发布：
+
+```plain
+/safe/inspire_hand/squat_lock = true
+```
+
+`hand_safety_node` 随后进入蹲姿锁存，向左右手以 50 Hz 发布 10 帧蹲姿安全手势，并屏蔽所有普通 raw 指令。默认不会在机器人回到常规运控后自动解除锁存，需要按 `F1` 手动解除。
 
 ## 语音提示
 
@@ -147,11 +175,17 @@ TTS 的 API ID 是 `1001`，请求参数是 JSON，包含 `index`、`text`、`sp
 - `/safe/inspire_hand/raw/cmd/{l,r}`（`InspireHandCtrl`）
 - `/inspire_hand/state/{l,r}`（`InspireHandState`）
 - `/safe/inspire_hand/estop`（`std_msgs/Bool`）
+- `/safe/inspire_hand/squat_lock`（`std_msgs/Bool`）
 
 发布：
 
 - `/inspire_hand/ctrl/{l,r}`（`InspireHandCtrl`）
 - `/safe/inspire_hand/trigger`（`std_msgs/String`）
+
+参数：
+
+- `squat_lock_topic`，默认 `/safe/inspire_hand/squat_lock`
+- `squat_safe_publish_frames`，默认 `10`
 
 ### hand_gamepad_estop
 
@@ -162,19 +196,37 @@ TTS 的 API ID 是 `1001`，请求参数是 JSON，包含 `index`、`text`、`sp
 发布：
 
 - `/safe/inspire_hand/estop`（`std_msgs/Bool`）
-- `/safe/inspire_hand/raw/cmd/l`（`InspireHandCtrl`）
-- `/safe/inspire_hand/raw/cmd/r`（`InspireHandCtrl`）
+- `/safe/inspire_hand/squat_lock`（`std_msgs/Bool`，按 `F1` 时请求解除）
 
 参数：
 
 - `lowstate_topic`，默认 `/lowstate`
 - `estop_topic`，默认 `/safe/inspire_hand/estop`
+- `squat_lock_topic`，默认 `/safe/inspire_hand/squat_lock`
 - `short_press_min_seconds`，默认 `0.05`
 - `long_press_seconds`，默认 `2.0`
-- `squat_safe_hold_seconds`，默认 `2.0`
-- `squat_safe_publish_frames`，默认 `10`
-- `left_raw_cmd_topic`，默认 `/safe/inspire_hand/raw/cmd/l`
-- `right_raw_cmd_topic`，默认 `/safe/inspire_hand/raw/cmd/r`
+
+### hand_robot_state_monitor
+
+订阅：
+
+- `/api/sport/response`（`unitree_api/msg/Response`）
+
+发布：
+
+- `/api/sport/request`（`unitree_api/msg/Request`）
+- `/safe/inspire_hand/squat_lock`（`std_msgs/Bool`）
+
+参数：
+
+- `squat_lock_topic`，默认 `/safe/inspire_hand/squat_lock`
+- `sport_request_topic`，默认 `/api/sport/request`
+- `sport_response_topic`，默认 `/api/sport/response`
+- `poll_hz`，默认 `5.0`
+- `response_timeout_sec`，默认 `1.0`
+- `lock_fsm_ids`，默认 `[706]`
+- `unlock_fsm_ids`，默认 `[501, 801]`
+- `auto_clear_when_safe`，默认 `false`
 
 ### hand_safety_voice_node
 
@@ -229,8 +281,10 @@ ros2 launch hand_safety_pkg hand_safety.launch.py
 
 ```bash
 ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety
-ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_hold_seconds:=2.0
+ros2 launch hand_safety_pkg hand_safety.launch.py squat_lock_topic:=/safe/inspire_hand/squat_lock
 ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_publish_frames:=10
+ros2 launch hand_safety_pkg hand_safety.launch.py enable_robot_state_monitor:=true
+ros2 launch hand_safety_pkg hand_safety.launch.py auto_clear_squat_lock:=false
 ros2 launch hand_safety_pkg hand_safety.launch.py enable_record:=false
 ```
 
@@ -245,6 +299,7 @@ ExecStart=/bin/bash -lc 'source <your_repo_root>/unitree_ros2/setup.sh && source
 ```bash
 ros2 run hand_safety_pkg hand_safety_node
 ros2 run hand_safety_pkg hand_gamepad_estop
+ros2 run hand_safety_pkg hand_robot_state_monitor
 ros2 run hand_safety_pkg hand_safety_voice_node
 ros2 run hand_safety_pkg hand_safety_record_node
 ```
@@ -254,6 +309,7 @@ ros2 run hand_safety_pkg hand_safety_record_node
 ```bash
 ros2 topic hz /lowstate
 ros2 topic echo /safe/inspire_hand/estop
+ros2 topic echo /safe/inspire_hand/squat_lock
 ros2 topic echo /api/voice/response
 ros2 pkg executables hand_safety_pkg
 ```

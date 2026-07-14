@@ -23,7 +23,6 @@ Unitree G1 /lowstate
 hand_gamepad_estop
       | short press L1+R1: true
       | press F1: false
-      | hold L2+A: squat-safe hand posture
       v
 /safe/inspire_hand/estop                std_msgs/Bool
       |
@@ -31,9 +30,15 @@ hand_gamepad_estop
       |
       +--> hand_safety_voice_node       TTS prompt through /api/voice/request
 
-/safe/inspire_hand/raw/cmd/{l,r}        InspireHandCtrl
-      ^
-      | squat-safe posture command from hand_gamepad_estop
+Unitree G1 /api/sport/request,response
+      |
+      v
+hand_robot_state_monitor
+      | fsm_id 706: true
+      v
+/safe/inspire_hand/squat_lock           std_msgs/Bool
+
+      +--> hand_safety_node             latch squat posture, close both hands
 
 /safe/inspire_hand/trigger              std_msgs/String
       |
@@ -77,7 +82,7 @@ speed_set = [1000, 1000, 1000, 1000, 1000, 1000]
 mode      = 0b0001
 ```
 
-This posture closes the pitch joints while keeping the thumb bend/roll channel at `1000`, so both hands are safer for squat or ground-support motions.
+This posture closes the pitch joints while keeping the thumb bend/roll channel at `1000`, so both hands grip safely after the robot enters the squat transition state. When the squat lock is active, `hand_safety_node` ignores normal raw commands until the lock is cleared.
 
 ## Safety Rules
 
@@ -105,8 +110,7 @@ Gamepad actions:
 |--------|--------|
 | Short press `L1+R1` | Publish `/safe/inspire_hand/estop=true` |
 | Hold `L1+R1` for 2 seconds or longer | Reserved for the robot damping/estop node; hand short-press estop will not fire |
-| Press `F1` | Publish `/safe/inspire_hand/estop=false` and clear the hand estop latch |
-| Hold `L2+A` for 2 seconds | Publish 10 frames at 50 Hz of the squat-safe hand posture to `/safe/inspire_hand/raw/cmd/{l,r}` |
+| Press `F1` | Publish `/safe/inspire_hand/estop=false` and `/safe/inspire_hand/squat_lock=false` |
 
 Manual estop control:
 
@@ -114,6 +118,30 @@ Manual estop control:
 ros2 topic pub --once /safe/inspire_hand/estop std_msgs/msg/Bool "{data: true}"
 ros2 topic pub --once /safe/inspire_hand/estop std_msgs/msg/Bool "{data: false}"
 ```
+
+Manual squat lock control:
+
+```bash
+ros2 topic pub --once /safe/inspire_hand/squat_lock std_msgs/msg/Bool "{data: true}"
+ros2 topic pub --once /safe/inspire_hand/squat_lock std_msgs/msg/Bool "{data: false}"
+```
+
+## Squat Hand Grip
+
+`hand_robot_state_monitor` uses the Unitree sport API request/response topics to query the current G1 FSM ID:
+
+```plain
+/api/sport/request
+/api/sport/response
+```
+
+When `fsm_id == 706`, the robot is in the stand-to-squat or squat-to-stand transition state. The monitor publishes:
+
+```plain
+/safe/inspire_hand/squat_lock = true
+```
+
+`hand_safety_node` then latches the squat lock, sends 10 frames at 50 Hz of the squat-safe hand posture to both hands, and blocks all normal raw commands. By default the lock is not automatically cleared when the robot returns to normal motion; press `F1` to clear it.
 
 ## Voice Prompt
 
@@ -147,11 +175,17 @@ Subscribes:
 - `/safe/inspire_hand/raw/cmd/{l,r}` (`InspireHandCtrl`)
 - `/inspire_hand/state/{l,r}` (`InspireHandState`)
 - `/safe/inspire_hand/estop` (`std_msgs/Bool`)
+- `/safe/inspire_hand/squat_lock` (`std_msgs/Bool`)
 
 Publishes:
 
 - `/inspire_hand/ctrl/{l,r}` (`InspireHandCtrl`)
 - `/safe/inspire_hand/trigger` (`std_msgs/String`)
+
+Parameters:
+
+- `squat_lock_topic`, default `/safe/inspire_hand/squat_lock`
+- `squat_safe_publish_frames`, default `10`
 
 ### hand_gamepad_estop
 
@@ -162,19 +196,37 @@ Subscribes:
 Publishes:
 
 - `/safe/inspire_hand/estop` (`std_msgs/Bool`)
-- `/safe/inspire_hand/raw/cmd/l` (`InspireHandCtrl`)
-- `/safe/inspire_hand/raw/cmd/r` (`InspireHandCtrl`)
+- `/safe/inspire_hand/squat_lock` (`std_msgs/Bool`, clear request on `F1`)
 
 Parameters:
 
 - `lowstate_topic`, default `/lowstate`
 - `estop_topic`, default `/safe/inspire_hand/estop`
+- `squat_lock_topic`, default `/safe/inspire_hand/squat_lock`
 - `short_press_min_seconds`, default `0.05`
 - `long_press_seconds`, default `2.0`
-- `squat_safe_hold_seconds`, default `2.0`
-- `squat_safe_publish_frames`, default `10`
-- `left_raw_cmd_topic`, default `/safe/inspire_hand/raw/cmd/l`
-- `right_raw_cmd_topic`, default `/safe/inspire_hand/raw/cmd/r`
+
+### hand_robot_state_monitor
+
+Subscribes:
+
+- `/api/sport/response` (`unitree_api/msg/Response`)
+
+Publishes:
+
+- `/api/sport/request` (`unitree_api/msg/Request`)
+- `/safe/inspire_hand/squat_lock` (`std_msgs/Bool`)
+
+Parameters:
+
+- `squat_lock_topic`, default `/safe/inspire_hand/squat_lock`
+- `sport_request_topic`, default `/api/sport/request`
+- `sport_response_topic`, default `/api/sport/response`
+- `poll_hz`, default `5.0`
+- `response_timeout_sec`, default `1.0`
+- `lock_fsm_ids`, default `[706]`
+- `unlock_fsm_ids`, default `[501, 801]`
+- `auto_clear_when_safe`, default `false`
 
 ### hand_safety_voice_node
 
@@ -229,8 +281,10 @@ Useful launch arguments:
 
 ```bash
 ros2 launch hand_safety_pkg hand_safety.launch.py record_log_dir:=/tmp/hand_safety
-ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_hold_seconds:=2.0
+ros2 launch hand_safety_pkg hand_safety.launch.py squat_lock_topic:=/safe/inspire_hand/squat_lock
 ros2 launch hand_safety_pkg hand_safety.launch.py squat_safe_publish_frames:=10
+ros2 launch hand_safety_pkg hand_safety.launch.py enable_robot_state_monitor:=true
+ros2 launch hand_safety_pkg hand_safety.launch.py auto_clear_squat_lock:=false
 ros2 launch hand_safety_pkg hand_safety.launch.py enable_record:=false
 ```
 
@@ -245,6 +299,7 @@ Individual nodes can still be started manually for debugging:
 ```bash
 ros2 run hand_safety_pkg hand_safety_node
 ros2 run hand_safety_pkg hand_gamepad_estop
+ros2 run hand_safety_pkg hand_robot_state_monitor
 ros2 run hand_safety_pkg hand_safety_voice_node
 ros2 run hand_safety_pkg hand_safety_record_node
 ```
@@ -254,6 +309,7 @@ ros2 run hand_safety_pkg hand_safety_record_node
 ```bash
 ros2 topic hz /lowstate
 ros2 topic echo /safe/inspire_hand/estop
+ros2 topic echo /safe/inspire_hand/squat_lock
 ros2 topic echo /api/voice/response
 ros2 pkg executables hand_safety_pkg
 ```

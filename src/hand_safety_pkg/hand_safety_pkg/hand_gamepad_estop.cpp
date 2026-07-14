@@ -1,17 +1,14 @@
 #include <rclcpp/rclcpp.hpp>
 
-#include <inspire_hand_msgs/msg/inspire_hand_ctrl.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <unitree_hg/msg/low_state.hpp>
 
-#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
 
 using Bool = std_msgs::msg::Bool;
-using InspireHandCtrl = inspire_hand_msgs::msg::InspireHandCtrl;
 using LowState = unitree_hg::msg::LowState;
 
 namespace unitree_gamepad
@@ -143,18 +140,12 @@ public:
             "lowstate_topic", "/lowstate");
         estop_topic_ = this->declare_parameter<std::string>(
             "estop_topic", "/safe/inspire_hand/estop");
+        squat_lock_topic_ = this->declare_parameter<std::string>(
+            "squat_lock_topic", "/safe/inspire_hand/squat_lock");
         short_press_min_seconds_ = this->declare_parameter<double>(
             "short_press_min_seconds", 0.05);
         long_press_seconds_ = this->declare_parameter<double>(
             "long_press_seconds", 2.0);
-        squat_safe_hold_seconds_ = this->declare_parameter<double>(
-            "squat_safe_hold_seconds", 2.0);
-        squat_safe_publish_frames_ = this->declare_parameter<int>(
-            "squat_safe_publish_frames", 10);
-        left_raw_cmd_topic_ = this->declare_parameter<std::string>(
-            "left_raw_cmd_topic", "/safe/inspire_hand/raw/cmd/l");
-        right_raw_cmd_topic_ = this->declare_parameter<std::string>(
-            "right_raw_cmd_topic", "/safe/inspire_hand/raw/cmd/r");
 
         lowstate_sub_ = this->create_subscription<LowState>(
             lowstate_topic_, 10,
@@ -163,15 +154,8 @@ public:
             });
 
         estop_pub_ = this->create_publisher<Bool>(estop_topic_, 10);
-        left_raw_cmd_pub_ = this->create_publisher<InspireHandCtrl>(
-            left_raw_cmd_topic_, 10);
-        right_raw_cmd_pub_ = this->create_publisher<InspireHandCtrl>(
-            right_raw_cmd_topic_, 10);
-        squat_safe_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(20),
-            [this]() {
-                this->squat_safe_timer_callback();
-            });
+        squat_lock_pub_ = this->create_publisher<Bool>(
+            squat_lock_topic_, 10);
 
         RCLCPP_INFO(this->get_logger(),
             "Hand gamepad estop initialized: short press L1+R1 -> %s, "
@@ -189,8 +173,6 @@ private:
         if (gamepad_.F1.on_press) {
             clear_hand_estop();
         }
-
-        handle_squat_safe_combo();
 
         const bool combo_pressed = gamepad_.L1.pressed && gamepad_.R1.pressed;
         const auto now = this->now();
@@ -246,93 +228,34 @@ private:
         auto msg = Bool();
         msg.data = false;
         estop_pub_->publish(msg);
-        RCLCPP_WARN(this->get_logger(), "F1 pressed: hand estop clear requested.");
+        publish_squat_lock(false);
+        RCLCPP_WARN(this->get_logger(),
+            "F1 pressed: hand estop and squat lock clear requested.");
     }
 
-    void handle_squat_safe_combo()
+    void publish_squat_lock(bool locked)
     {
-        const bool combo_pressed = gamepad_.L2.pressed && gamepad_.A.pressed;
-        const auto now = this->now();
-
-        if (combo_pressed && !squat_safe_combo_active_) {
-            squat_safe_combo_active_ = true;
-            squat_safe_triggered_this_hold_ = false;
-            squat_safe_start_time_ = now;
-            return;
-        }
-
-        if (combo_pressed && squat_safe_combo_active_) {
-            const double held_seconds = (now - squat_safe_start_time_).seconds();
-            if (!squat_safe_triggered_this_hold_ &&
-                held_seconds >= squat_safe_hold_seconds_)
-            {
-                squat_safe_triggered_this_hold_ = true;
-                RCLCPP_WARN(this->get_logger(),
-                    "L2+A held for %.2f s: publishing squat-safe hand posture.",
-                    held_seconds);
-                trigger_squat_safe_posture();
-            }
-            return;
-        }
-
-        if (!combo_pressed && squat_safe_combo_active_) {
-            squat_safe_combo_active_ = false;
-        }
-    }
-
-    void trigger_squat_safe_posture()
-    {
-        squat_safe_pending_frames_ = std::max(1, squat_safe_publish_frames_);
-        publish_squat_safe_posture();
-    }
-
-    void squat_safe_timer_callback()
-    {
-        if (squat_safe_pending_frames_ <= 0) {
-            return;
-        }
-        publish_squat_safe_posture();
-    }
-
-    void publish_squat_safe_posture()
-    {
-        InspireHandCtrl cmd;
-        cmd.pos_set = {0, 0, 0, 0, 0, 0};
-        cmd.angle_set = {0, 0, 0, 0, 0, 1000};
-        cmd.force_set = {3000, 3000, 3000, 3000, 3000, 3000};
-        cmd.speed_set = {1000, 1000, 1000, 1000, 1000, 1000};
-        cmd.mode = 0b0001;
-
-        left_raw_cmd_pub_->publish(cmd);
-        right_raw_cmd_pub_->publish(cmd);
-        --squat_safe_pending_frames_;
+        auto msg = Bool();
+        msg.data = locked;
+        squat_lock_pub_->publish(msg);
     }
 
     static constexpr size_t remote_size_ = 40;
 
     std::string lowstate_topic_;
     std::string estop_topic_;
-    std::string left_raw_cmd_topic_;
-    std::string right_raw_cmd_topic_;
+    std::string squat_lock_topic_;
     double short_press_min_seconds_{0.05};
     double long_press_seconds_{2.0};
-    double squat_safe_hold_seconds_{2.0};
-    int squat_safe_publish_frames_{10};
 
     rclcpp::Subscription<LowState>::SharedPtr lowstate_sub_;
     rclcpp::Publisher<Bool>::SharedPtr estop_pub_;
-    rclcpp::Publisher<InspireHandCtrl>::SharedPtr left_raw_cmd_pub_;
-    rclcpp::Publisher<InspireHandCtrl>::SharedPtr right_raw_cmd_pub_;
-    rclcpp::TimerBase::SharedPtr squat_safe_timer_;
+    rclcpp::Publisher<Bool>::SharedPtr squat_lock_pub_;
 
     unitree_gamepad::Gamepad gamepad_;
     bool combo_active_{false};
     bool combo_long_press_seen_{false};
     rclcpp::Time combo_start_time_;
-    bool squat_safe_combo_active_{false};
-    bool squat_safe_triggered_this_hold_{false};
-    rclcpp::Time squat_safe_start_time_;
-    int squat_safe_pending_frames_{0};
 };
 
 int main(int argc, char * argv[])
